@@ -93,3 +93,23 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag backend image
+        run: |
+          docker tag cozy-loops-backend:latest \
+            753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
+
+      - name: Push backend image
+        run: |
+          docker push \
+            753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
+
+      - name: Tag frontend image
+        run: |
+          docker tag cozy-loops-frontend:latest \
+            753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
+
+      - name: Push frontend image
+        run: |
+          docker push \
+            753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
