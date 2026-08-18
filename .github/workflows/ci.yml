@@ -47,6 +47,19 @@ jobs:
       - name: Build frontend Docker image
         run: docker build -t cozy-loops-frontend ./frontend
 
+      - name: Debug GitHub identity
+        run: |
+          echo "Repository: ${{ github.repository }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Actor: ${{ github.actor }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::753523293777:role/CozyLoopsGitHubActionsRole
+          aws-region: eu-north-1  
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
