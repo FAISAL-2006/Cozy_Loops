@@ -141,3 +141,9 @@ jobs:
             echo "Deployment timed out!"
             exit 1
           fi
+      - name: Verify production deployment
+        run: |
+          curl --fail --silent --show-error \
+            https://vm-yarncrafts.online/api/
+
+          echo "Production health check passed!"    
