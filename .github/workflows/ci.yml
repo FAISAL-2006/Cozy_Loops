@@ -1,4 +1,4 @@
-name: Cozy Loops CI
+name: Cozy Loops CI/CD
 
 on:
   push:
@@ -47,43 +47,6 @@ jobs:
       - name: Build frontend Docker image
         run: docker build -t cozy-loops-frontend ./frontend
 
-      - name: Debug GitHub OIDC claims
-        env:
-          ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
-        run: |
-          TOKEN=$(curl -sS \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
-            | jq -r '.value')
-
-          export TOKEN
-
-          python3 - <<'PY'
-          import os
-          import json
-          import base64
-
-          token = os.environ.get("TOKEN")
-
-          if not token:
-              print("Token not available")
-              raise SystemExit(1)
-
-          payload = token.split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-
-          claims = json.loads(
-              base64.urlsafe_b64decode(payload)
-          )
-
-          print("iss:", claims.get("iss"))
-          print("aud:", claims.get("aud"))
-          print("sub:", claims.get("sub"))
-          print("repository:", claims.get("repository"))
-          print("ref:", claims.get("ref"))
-          PY
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -91,7 +54,6 @@ jobs:
           aws-region: eu-north-1
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Tag backend image
@@ -99,17 +61,31 @@ jobs:
           docker tag cozy-loops-backend:latest \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
 
-      - name: Push backend image
-        run: |
-          docker push \
-            753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
-
       - name: Tag frontend image
         run: |
           docker tag cozy-loops-frontend:latest \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
+      - name: Push backend image
+        run: |
+          docker push \
+            753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
+
       - name: Push frontend image
         run: |
           docker push \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
+
+      - name: Deploy to EC2
+        run: |
+          aws ssm send-command \
+            --region eu-north-1 \
+            --instance-ids i-0b3656616e82f731f \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "cd /home/ec2-user/cozy-loops",
+              "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin 753523293777.dkr.ecr.eu-north-1.amazonaws.com",
+              "docker compose pull",
+              "docker compose up -d",
+              "docker image prune -f"
+            ]'
