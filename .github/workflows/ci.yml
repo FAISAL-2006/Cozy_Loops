@@ -223,6 +223,6 @@ jobs:
             --retry-connrefused \
             https://vm-yarncrafts.online/api/
 
-          echo "========================================"
+          echo "========================================+"
           echo "Production health check passed!"
-          echo "========================================"
+          echo "========================================+"
