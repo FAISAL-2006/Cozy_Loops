@@ -17,23 +17,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # --------------------------------------------------
+      # ----------------------------------------
       # 1. Checkout
-      # --------------------------------------------------
+      # ----------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
+      # ----------------------------------------
       # 2. Node.js
-      # --------------------------------------------------
+      # ----------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      # --------------------------------------------------
-      # 3. Backend CI
-      # --------------------------------------------------
+      # ----------------------------------------
+      # 3. Backend build
+      # ----------------------------------------
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
@@ -42,9 +42,9 @@ jobs:
         working-directory: backend
         run: npm run build
 
-      # --------------------------------------------------
-      # 4. Frontend CI
-      # --------------------------------------------------
+      # ----------------------------------------
+      # 4. Frontend build
+      # ----------------------------------------
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -53,33 +53,33 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      # --------------------------------------------------
+      # ----------------------------------------
       # 5. Build Docker images
-      # --------------------------------------------------
+      # ----------------------------------------
       - name: Build backend Docker image
         run: docker build -t cozy-loops-backend ./backend
 
       - name: Build frontend Docker image
         run: docker build -t cozy-loops-frontend ./frontend
 
-      # --------------------------------------------------
-      # 6. Configure AWS using GitHub OIDC
-      # --------------------------------------------------
+      # ----------------------------------------
+      # 6. AWS credentials
+      # ----------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::753523293777:role/CozyLoopsGitHubActionsRole
           aws-region: eu-north-1
 
-      # --------------------------------------------------
+      # ----------------------------------------
       # 7. Login to ECR
-      # --------------------------------------------------
+      # ----------------------------------------
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # --------------------------------------------------
+      # ----------------------------------------
       # 8. Tag Docker images
-      # --------------------------------------------------
+      # ----------------------------------------
       - name: Tag backend image
         run: |
           docker tag cozy-loops-backend:latest \
@@ -90,9 +90,9 @@ jobs:
           docker tag cozy-loops-frontend:latest \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
-      # --------------------------------------------------
-      # 9. Push images to ECR
-      # --------------------------------------------------
+      # ----------------------------------------
+      # 9. Push Docker images
+      # ----------------------------------------
       - name: Push backend image
         run: |
           docker push \
@@ -103,76 +103,16 @@ jobs:
           docker push \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
-      # --------------------------------------------------
-      # 10. Test SSM connection
-      # --------------------------------------------------
-      - name: Test SSM connection
-        run: |
-          COMMAND_ID=$(aws ssm send-command \
-            --region eu-north-1 \
-            --instance-ids i-0b3656616e82f731f \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["echo SSM_WORKS","whoami","hostname"]' \
-            --query "Command.CommandId" \
-            --output text)
-
-          echo "SSM Test Command ID: $COMMAND_ID"
-
-          for i in {1..12}; do
-
-            STATUS=$(aws ssm get-command-invocation \
-              --region eu-north-1 \
-              --command-id "$COMMAND_ID" \
-              --instance-id i-0b3656616e82f731f \
-              --query "Status" \
-              --output text 2>/dev/null || echo "Pending")
-
-            echo "SSM test status: $STATUS"
-
-            case "$STATUS" in
-
-              Success)
-                echo "SSM connection successful!"
-
-                aws ssm get-command-invocation \
-                  --region eu-north-1 \
-                  --command-id "$COMMAND_ID" \
-                  --instance-id i-0b3656616e82f731f \
-                  --query "StandardOutputContent" \
-                  --output text
-
-                break
-                ;;
-
-              Failed|Cancelled|TimedOut|Cancelling)
-                echo "SSM connection failed!"
-
-                aws ssm get-command-invocation \
-                  --region eu-north-1 \
-                  --command-id "$COMMAND_ID" \
-                  --instance-id i-0b3656616e82f731f \
-                  --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
-                  --output yaml
-
-                exit 1
-                ;;
-
-            esac
-
-            sleep 5
-
-          done
-
-          if [ "$STATUS" != "Success" ]; then
-            echo "SSM test timed out!"
-            exit 1
-          fi
-
-      # --------------------------------------------------
-      # 11. Deploy to EC2
-      # --------------------------------------------------
+      # ----------------------------------------
+      # 10. Deploy to EC2 through SSM
+      # ----------------------------------------
       - name: Deploy to EC2
+        shell: bash
         run: |
+          set -e
+
+          echo "Sending deployment command to EC2..."
+
           COMMAND_ID=$(aws ssm send-command \
             --region eu-north-1 \
             --instance-ids i-0b3656616e82f731f \
@@ -181,7 +121,7 @@ jobs:
               "cd /home/ec2-user/cozy-loops",
               "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin 753523293777.dkr.ecr.eu-north-1.amazonaws.com",
               "docker compose pull",
-              "docker compose up -d --remove-orphans",
+              "docker compose up -d",
               "docker image prune -f"
             ]' \
             --query "Command.CommandId" \
@@ -189,6 +129,11 @@ jobs:
 
           echo "SSM Command ID: $COMMAND_ID"
           echo "Waiting for EC2 deployment..."
+
+          # Give SSM a little time before the first status check
+          sleep 5
+
+          STATUS="Pending"
 
           for i in {1..60}; do
 
@@ -199,56 +144,85 @@ jobs:
               --query "Status" \
               --output text 2>/dev/null || echo "Pending")
 
-            echo "Current status: $STATUS"
+            echo "Attempt $i/60 - Status: $STATUS"
 
-            case "$STATUS" in
+            if [ "$STATUS" = "Success" ]; then
+              echo "========================================"
+              echo "Deployment succeeded!"
+              echo "========================================"
+              break
+            fi
 
-              Success)
-                echo "Deployment succeeded!"
-                break
-                ;;
+            if [[ "$STATUS" == "Failed" ||
+                  "$STATUS" == "Cancelled" ||
+                  "$STATUS" == "TimedOut" ]]; then
 
-              Failed|Cancelled|TimedOut|Cancelling)
-                echo "Deployment failed!"
+              echo "========================================"
+              echo "Deployment failed!"
+              echo "========================================"
 
-                echo "----- STDOUT -----"
+              echo ""
+              echo "----- STDOUT -----"
 
-                aws ssm get-command-invocation \
-                  --region eu-north-1 \
-                  --command-id "$COMMAND_ID" \
-                  --instance-id i-0b3656616e82f731f \
-                  --query "StandardOutputContent" \
-                  --output text
+              aws ssm get-command-invocation \
+                --region eu-north-1 \
+                --command-id "$COMMAND_ID" \
+                --instance-id i-0b3656616e82f731f \
+                --query "StandardOutputContent" \
+                --output text || true
 
-                echo "----- STDERR -----"
+              echo ""
+              echo "----- STDERR -----"
 
-                aws ssm get-command-invocation \
-                  --region eu-north-1 \
-                  --command-id "$COMMAND_ID" \
-                  --instance-id i-0b3656616e82f731f \
-                  --query "StandardErrorContent" \
-                  --output text
+              aws ssm get-command-invocation \
+                --region eu-north-1 \
+                --command-id "$COMMAND_ID" \
+                --instance-id i-0b3656616e82f731f \
+                --query "StandardErrorContent" \
+                --output text || true
 
-                exit 1
-                ;;
-
-            esac
+              exit 1
+            fi
 
             sleep 5
-
           done
 
           if [ "$STATUS" != "Success" ]; then
-            echo "Deployment timed out!"
+            echo "========================================"
+            echo "Deployment polling timed out!"
+            echo "========================================"
+
+            echo "SSM Command ID: $COMMAND_ID"
+
+            echo ""
+            echo "Final command status:"
+
+            aws ssm get-command-invocation \
+              --region eu-north-1 \
+              --command-id "$COMMAND_ID" \
+              --instance-id i-0b3656616e82f731f \
+              --query "{Status:Status,StatusDetails:StatusDetails,ResponseCode:ResponseCode}" \
+              --output table || true
+
             exit 1
           fi
 
-      # --------------------------------------------------
-      # 12. Production health check
-      # --------------------------------------------------
+      # ----------------------------------------
+      # 11. Verify production
+      # ----------------------------------------
       - name: Verify production deployment
         run: |
-          curl --fail --silent --show-error \
+          echo "Checking production..."
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 10 \
+            --retry-delay 5 \
+            --retry-connrefused \
             https://vm-yarncrafts.online/api/
 
+          echo "========================================"
           echo "Production health check passed!"
+          echo "========================================"
