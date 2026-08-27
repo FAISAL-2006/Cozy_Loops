@@ -17,14 +17,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # --------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Node.js
+      # --------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
+      # --------------------------------------------------
+      # 3. Backend CI
+      # --------------------------------------------------
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
@@ -33,6 +42,9 @@ jobs:
         working-directory: backend
         run: npm run build
 
+      # --------------------------------------------------
+      # 4. Frontend CI
+      # --------------------------------------------------
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -41,21 +53,33 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      # --------------------------------------------------
+      # 5. Build Docker images
+      # --------------------------------------------------
       - name: Build backend Docker image
         run: docker build -t cozy-loops-backend ./backend
 
       - name: Build frontend Docker image
         run: docker build -t cozy-loops-frontend ./frontend
 
+      # --------------------------------------------------
+      # 6. Configure AWS using GitHub OIDC
+      # --------------------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::753523293777:role/CozyLoopsGitHubActionsRole
           aws-region: eu-north-1
 
+      # --------------------------------------------------
+      # 7. Login to ECR
+      # --------------------------------------------------
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      # --------------------------------------------------
+      # 8. Tag Docker images
+      # --------------------------------------------------
       - name: Tag backend image
         run: |
           docker tag cozy-loops-backend:latest \
@@ -66,6 +90,9 @@ jobs:
           docker tag cozy-loops-frontend:latest \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
+      # --------------------------------------------------
+      # 9. Push images to ECR
+      # --------------------------------------------------
       - name: Push backend image
         run: |
           docker push \
@@ -76,6 +103,74 @@ jobs:
           docker push \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
+      # --------------------------------------------------
+      # 10. Test SSM connection
+      # --------------------------------------------------
+      - name: Test SSM connection
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --region eu-north-1 \
+            --instance-ids i-0b3656616e82f731f \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["echo SSM_WORKS","whoami","hostname"]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Test Command ID: $COMMAND_ID"
+
+          for i in {1..12}; do
+
+            STATUS=$(aws ssm get-command-invocation \
+              --region eu-north-1 \
+              --command-id "$COMMAND_ID" \
+              --instance-id i-0b3656616e82f731f \
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")
+
+            echo "SSM test status: $STATUS"
+
+            case "$STATUS" in
+
+              Success)
+                echo "SSM connection successful!"
+
+                aws ssm get-command-invocation \
+                  --region eu-north-1 \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id i-0b3656616e82f731f \
+                  --query "StandardOutputContent" \
+                  --output text
+
+                break
+                ;;
+
+              Failed|Cancelled|TimedOut|Cancelling)
+                echo "SSM connection failed!"
+
+                aws ssm get-command-invocation \
+                  --region eu-north-1 \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id i-0b3656616e82f731f \
+                  --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
+                  --output yaml
+
+                exit 1
+                ;;
+
+            esac
+
+            sleep 5
+
+          done
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "SSM test timed out!"
+            exit 1
+          fi
+
+      # --------------------------------------------------
+      # 11. Deploy to EC2
+      # --------------------------------------------------
       - name: Deploy to EC2
         run: |
           COMMAND_ID=$(aws ssm send-command \
@@ -86,17 +181,17 @@ jobs:
               "cd /home/ec2-user/cozy-loops",
               "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin 753523293777.dkr.ecr.eu-north-1.amazonaws.com",
               "docker compose pull",
-              "docker compose up -d",
+              "docker compose up -d --remove-orphans",
               "docker image prune -f"
             ]' \
             --query "Command.CommandId" \
             --output text)
 
           echo "SSM Command ID: $COMMAND_ID"
-
           echo "Waiting for EC2 deployment..."
 
-          for i in {1..30}; do
+          for i in {1..60}; do
+
             STATUS=$(aws ssm get-command-invocation \
               --region eu-north-1 \
               --command-id "$COMMAND_ID" \
@@ -107,14 +202,17 @@ jobs:
             echo "Current status: $STATUS"
 
             case "$STATUS" in
+
               Success)
                 echo "Deployment succeeded!"
                 break
                 ;;
+
               Failed|Cancelled|TimedOut|Cancelling)
                 echo "Deployment failed!"
 
                 echo "----- STDOUT -----"
+
                 aws ssm get-command-invocation \
                   --region eu-north-1 \
                   --command-id "$COMMAND_ID" \
@@ -123,6 +221,7 @@ jobs:
                   --output text
 
                 echo "----- STDERR -----"
+
                 aws ssm get-command-invocation \
                   --region eu-north-1 \
                   --command-id "$COMMAND_ID" \
@@ -132,18 +231,24 @@ jobs:
 
                 exit 1
                 ;;
+
             esac
 
             sleep 5
+
           done
 
           if [ "$STATUS" != "Success" ]; then
             echo "Deployment timed out!"
             exit 1
           fi
+
+      # --------------------------------------------------
+      # 12. Production health check
+      # --------------------------------------------------
       - name: Verify production deployment
         run: |
           curl --fail --silent --show-error \
             https://vm-yarncrafts.online/api/
 
-          echo "Production health check passed!"    
+          echo "Production health check passed!"
