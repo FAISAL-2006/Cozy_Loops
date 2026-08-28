@@ -43,25 +43,36 @@ jobs:
         run: npm run build
 
       # ----------------------------------------
-      # 4. Frontend build
+      # 4. Frontend dependencies
       # ----------------------------------------
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
-      - name: Verify frontend secrets
+
+      # ----------------------------------------
+      # 5. Verify frontend secrets
+      # ----------------------------------------
+      - name: Verify frontend environment
         env:
-        VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
-        VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
         run: |
-          if [ -n "$VITE_GOOGLE_CLIENT_ID" ]; then
-             echo "VITE_GOOGLE_CLIENT_ID = SET"
-          else
-             echo "VITE_GOOGLE_CLIENT_ID = MISSING"
-          exit 1
+          if [ -z "$VITE_GOOGLE_CLIENT_ID" ]; then
+            echo "ERROR: VITE_GOOGLE_CLIENT_ID is missing"
+            exit 1
           fi
 
-          echo "VITE_API_URL = $VITE_API_URL"  
+          if [ -z "$VITE_API_URL" ]; then
+            echo "ERROR: VITE_API_URL is missing"
+            exit 1
+          fi
 
+          echo "VITE_GOOGLE_CLIENT_ID = SET"
+          echo "VITE_API_URL = $VITE_API_URL"
+
+      # ----------------------------------------
+      # 6. Build frontend
+      # ----------------------------------------
       - name: Build frontend
         working-directory: frontend
         env:
@@ -70,20 +81,27 @@ jobs:
         run: npm run build
 
       # ----------------------------------------
-      # 5. Build Docker images
+      # 7. Build backend Docker image
       # ----------------------------------------
       - name: Build backend Docker image
-        run: docker build -t cozy-loops-backend ./backend
+        run: |
+          docker build \
+            -t cozy-loops-backend \
+            ./backend
 
+      # ----------------------------------------
+      # 8. Build frontend Docker image
+      # ----------------------------------------
       - name: Build frontend Docker image
         run: |
           docker build \
-           --build-arg VITE_GOOGLE_CLIENT_ID="${{ secrets.VITE_GOOGLE_CLIENT_ID }}" \
-           --build-arg VITE_API_URL="${{ secrets.VITE_API_URL }}" \
-          -t cozy-loops-frontend \
-          ./frontend
+            --build-arg VITE_GOOGLE_CLIENT_ID="${{ secrets.VITE_GOOGLE_CLIENT_ID }}" \
+            --build-arg VITE_API_URL="${{ secrets.VITE_API_URL }}" \
+            -t cozy-loops-frontend \
+            ./frontend
+
       # ----------------------------------------
-      # 6. AWS credentials
+      # 9. Configure AWS credentials
       # ----------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -92,39 +110,45 @@ jobs:
           aws-region: eu-north-1
 
       # ----------------------------------------
-      # 7. Login to ECR
+      # 10. Login to ECR
       # ----------------------------------------
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
       # ----------------------------------------
-      # 8. Tag Docker images
+      # 11. Tag backend image
       # ----------------------------------------
       - name: Tag backend image
         run: |
           docker tag cozy-loops-backend:latest \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
 
+      # ----------------------------------------
+      # 12. Tag frontend image
+      # ----------------------------------------
       - name: Tag frontend image
         run: |
           docker tag cozy-loops-frontend:latest \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
       # ----------------------------------------
-      # 9. Push Docker images
+      # 13. Push backend image
       # ----------------------------------------
       - name: Push backend image
         run: |
           docker push \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
 
+      # ----------------------------------------
+      # 14. Push frontend image
+      # ----------------------------------------
       - name: Push frontend image
         run: |
           docker push \
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
       # ----------------------------------------
-      # 10. Deploy to EC2 through SSM
+      # 15. Deploy to EC2 through SSM
       # ----------------------------------------
       - name: Deploy to EC2
         shell: bash
@@ -150,7 +174,6 @@ jobs:
           echo "SSM Command ID: $COMMAND_ID"
           echo "Waiting for EC2 deployment..."
 
-          # Give SSM a little time before the first status check
           sleep 5
 
           STATUS="Pending"
@@ -228,7 +251,7 @@ jobs:
           fi
 
       # ----------------------------------------
-      # 11. Verify production
+      # 16. Verify production
       # ----------------------------------------
       - name: Verify production deployment
         run: |
@@ -243,6 +266,6 @@ jobs:
             --retry-connrefused \
             https://vm-yarncrafts.online/api/
 
-          echo "========================================+"
+          echo "========================================"
           echo "Production health check passed!"
-          echo "========================================+"
+          echo "========================================"
