@@ -50,9 +50,9 @@ jobs:
         run: npm ci
 
       # ----------------------------------------
-      # 5. Verify frontend secrets
+      # 5. Verify frontend GitHub secrets
       # ----------------------------------------
-      - name: Verify frontend environment
+      - name: Verify frontend secrets
         env:
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
@@ -71,17 +71,7 @@ jobs:
           echo "VITE_API_URL = $VITE_API_URL"
 
       # ----------------------------------------
-      # 6. Build frontend
-      # ----------------------------------------
-      - name: Build frontend
-        working-directory: frontend
-        env:
-          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
-          VITE_API_URL: ${{ secrets.VITE_API_URL }}
-        run: npm run build
-
-      # ----------------------------------------
-      # 7. Build backend Docker image
+      # 6. Build backend Docker image
       # ----------------------------------------
       - name: Build backend Docker image
         run: |
@@ -90,18 +80,21 @@ jobs:
             ./backend
 
       # ----------------------------------------
-      # 8. Build frontend Docker image
+      # 7. Build frontend Docker image
       # ----------------------------------------
       - name: Build frontend Docker image
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
         run: |
           docker build \
-            --build-arg VITE_GOOGLE_CLIENT_ID="${{ secrets.VITE_GOOGLE_CLIENT_ID }}" \
-            --build-arg VITE_API_URL="${{ secrets.VITE_API_URL }}" \
+            --build-arg VITE_GOOGLE_CLIENT_ID="$VITE_GOOGLE_CLIENT_ID" \
+            --build-arg VITE_API_URL="$VITE_API_URL" \
             -t cozy-loops-frontend \
             ./frontend
 
       # ----------------------------------------
-      # 9. Configure AWS credentials
+      # 8. AWS credentials
       # ----------------------------------------
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -110,13 +103,13 @@ jobs:
           aws-region: eu-north-1
 
       # ----------------------------------------
-      # 10. Login to ECR
+      # 9. Login to ECR
       # ----------------------------------------
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
       # ----------------------------------------
-      # 11. Tag backend image
+      # 10. Tag backend image
       # ----------------------------------------
       - name: Tag backend image
         run: |
@@ -124,7 +117,7 @@ jobs:
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
 
       # ----------------------------------------
-      # 12. Tag frontend image
+      # 11. Tag frontend image
       # ----------------------------------------
       - name: Tag frontend image
         run: |
@@ -132,7 +125,7 @@ jobs:
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
       # ----------------------------------------
-      # 13. Push backend image
+      # 12. Push backend image
       # ----------------------------------------
       - name: Push backend image
         run: |
@@ -140,7 +133,7 @@ jobs:
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-backend:latest
 
       # ----------------------------------------
-      # 14. Push frontend image
+      # 13. Push frontend image
       # ----------------------------------------
       - name: Push frontend image
         run: |
@@ -148,7 +141,7 @@ jobs:
             753523293777.dkr.ecr.eu-north-1.amazonaws.com/cozy-loops-frontend:latest
 
       # ----------------------------------------
-      # 15. Deploy to EC2 through SSM
+      # 14. Deploy to EC2 through SSM
       # ----------------------------------------
       - name: Deploy to EC2
         shell: bash
@@ -251,7 +244,7 @@ jobs:
           fi
 
       # ----------------------------------------
-      # 16. Verify production
+      # 15. Verify production
       # ----------------------------------------
       - name: Verify production deployment
         run: |
