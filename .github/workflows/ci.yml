@@ -48,6 +48,19 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
+      - name: Verify frontend secrets
+        env:
+        VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+        VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          if [ -n "$VITE_GOOGLE_CLIENT_ID" ]; then
+             echo "VITE_GOOGLE_CLIENT_ID = SET"
+          else
+             echo "VITE_GOOGLE_CLIENT_ID = MISSING"
+          exit 1
+          fi
+
+          echo "VITE_API_URL = $VITE_API_URL"  
 
       - name: Build frontend
         working-directory: frontend
@@ -63,8 +76,12 @@ jobs:
         run: docker build -t cozy-loops-backend ./backend
 
       - name: Build frontend Docker image
-        run: docker build -t cozy-loops-frontend ./frontend
-
+        run: |
+          docker build \
+           --build-arg VITE_GOOGLE_CLIENT_ID="${{ secrets.VITE_GOOGLE_CLIENT_ID }}" \
+           --build-arg VITE_API_URL="${{ secrets.VITE_API_URL }}" \
+          -t cozy-loops-frontend \
+          ./frontend
       # ----------------------------------------
       # 6. AWS credentials
       # ----------------------------------------
