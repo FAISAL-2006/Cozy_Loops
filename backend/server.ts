@@ -1,8 +1,8 @@
+import "dotenv/config";
+
 //to handle post put patch etc req
 import express from "express";
 import cors from "cors";
-//import env 
-import dotenv from "dotenv";
 //conncection to our db
 import connectDB from "./config/db";
 import loginauth from "./routes/loginauth";
@@ -12,7 +12,6 @@ import cartroutes from "./routes/cartroutes";
 import orderroutes from "./routes/orderroutes";
 import paymentroute from "./routes/paymentroute";
 import addproduct from "./routes/addproduct"
-dotenv.config();
 
 connectDB();
 
